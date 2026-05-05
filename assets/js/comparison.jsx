@@ -134,7 +134,19 @@ function App() {
   const [sortMode, setSortMode]       = useState("family");
   const [edgeThresh, setEdgeThresh]   = useState(0.88);
   const [hovNode, setHovNode]         = useState(null);
+  const [mdsCoords, setMdsCoords]     = useState([]);
+  const [mdsComputing, setMdsComputing] = useState(false);
   const addRef = useRef(null);
+
+  const showAll = useCallback(() => {
+    if (!rawData) return;
+    setSelectedIdx(new Set(Array.from({length: rawData.labels.length}, (_, i) => i)));
+    setEdgeThresh(0.95);
+  }, [rawData]);
+  const resetView = useCallback(() => {
+    setSelectedIdx(new Set(DEFAULTS));
+    setEdgeThresh(0.88);
+  }, []);
 
   useEffect(() => {
     fetch(DATA_URL).then(r => r.json()).then(d => {
@@ -169,9 +181,15 @@ function App() {
     [sortMode, clusterOrder, visMeasures]
   );
 
-  const mdsCoords = useMemo(() => {
-    if (!rawData || visMeasures.length < 3) return [];
-    return computeMDS(visMeasures, getCorr);
+  // Async MDS — avoids freezing the UI on 330 nodes (~1 s computation)
+  useEffect(() => {
+    if (!rawData || visMeasures.length < 3) { setMdsCoords([]); return; }
+    setMdsComputing(true);
+    const t = setTimeout(() => {
+      setMdsCoords(computeMDS(visMeasures, getCorr));
+      setMdsComputing(false);
+    }, 20);
+    return () => clearTimeout(t);
   }, [visMeasures, getCorr, rawData]);
 
   const active = pin || hov;
@@ -217,7 +235,9 @@ function App() {
     return { min: min.toFixed(3), max: max.toFixed(3), minPair, maxPair };
   }, [visMeasures, getCorr, rawData]);
 
-  const MDS_W = 560, MDS_H = 430, PAD = 52;
+  const MDS_W = visMeasures.length > 100 ? 800 : 560;
+  const MDS_H = visMeasures.length > 100 ? 620 : 430;
+  const PAD   = visMeasures.length > 100 ? 18  : 52;
   const mdsLayout = useMemo(() => {
     if (!mdsCoords.length) return { coords: [], edges: [] };
     const xs = mdsCoords.map(c => c.x), ys = mdsCoords.map(c => c.y);
@@ -228,14 +248,16 @@ function App() {
       x: PAD + ((c.x - xMin) / xR) * (MDS_W - PAD * 2),
       y: PAD + ((c.y - yMin) / yR) * (MDS_H - PAD * 2)
     }));
-    const edges = [];
+    // Collect all qualifying edges, then keep strongest 800 to avoid SVG overload
+    const allEdges = [];
     for (let i = 0; i < visMeasures.length; i++)
       for (let j = i + 1; j < visMeasures.length; j++) {
         const v = getCorr(visMeasures[i].i, visMeasures[j].i);
-        if (v >= edgeThresh) edges.push({ i, j, v });
+        if (v >= edgeThresh) allEdges.push({ i, j, v });
       }
-    return { coords, edges };
-  }, [mdsCoords, visMeasures, getCorr, edgeThresh]);
+    allEdges.sort((a, b) => b.v - a.v);
+    return { coords, edges: allEdges.slice(0, 800) };
+  }, [mdsCoords, visMeasures, getCorr, edgeThresh, MDS_W, MDS_H, PAD]);
 
   const CELL = 24, LEFT = 155, TOP = 105, BAND = 6;
   const n = orderedMeasures.length;
@@ -445,12 +467,22 @@ function App() {
         {tab === "similarity" && (<>
           <div style={{width:182,background:"white",borderRight:"0.5px solid rgba(0,0,0,0.08)",padding:"12px",overflowY:"auto",flexShrink:0}}>
             <AddBlock/>
+            <div style={{display:"flex",gap:5,marginBottom:14}}>
+              <button onClick={showAll} style={{flex:1,padding:"5px 0",fontSize:11,fontWeight:500,border:"0.5px solid #B5D4F4",borderRadius:5,cursor:"pointer",background:"#E6F1FB",color:"#0C447C"}}>
+                All {rawData.labels.length}
+              </button>
+              <button onClick={resetView} style={{flex:1,padding:"5px 0",fontSize:11,fontWeight:500,border:"0.5px solid rgba(0,0,0,0.15)",borderRadius:5,cursor:"pointer",background:"transparent",color:"#64748b"}}>
+                Reset
+              </button>
+            </div>
             <FamilyToggles/>
             <SideSection label={"Show edges when rho >= " + edgeThresh.toFixed(2)} mt={4}>
               <input type="range" min={0.5} max={0.99} step={0.01} value={edgeThresh}
                 onChange={e=>setEdgeThresh(+e.target.value)}
                 style={{width:"100%",accentColor:"#378ADD"}}/>
-              <div style={{fontSize:10,color:"#94a3b8",marginTop:4}}>{mdsLayout.edges.length} edges visible</div>
+              <div style={{fontSize:10,color:"#94a3b8",marginTop:4}}>
+                {mdsComputing ? "computing..." : `${mdsLayout.edges.length} edges${mdsLayout.edges.length===800?" (capped at 800)":""}`}
+              </div>
             </SideSection>
             <SideSection label="Highlight">
               <input value={searchQ} onChange={e=>setSearchQ(e.target.value)} placeholder="Name to highlight..."
@@ -479,33 +511,43 @@ function App() {
                   · {mdsLayout.edges.filter(e=>e.i===hovNode||e.j===hovNode).length} strong connections (rho >= {edgeThresh.toFixed(2)})
                 </span>
               </>) : (
-                <div style={{color:"#94a3b8",fontSize:13}}>Hover a node to inspect · adjust edge threshold · {visMeasures.length} measures</div>
+                <div style={{color:"#94a3b8",fontSize:13}}>
+                  {mdsComputing
+                    ? `Computing layout for ${visMeasures.length} measures…`
+                    : `Hover a node · adjust edge threshold · ${visMeasures.length} measures shown`}
+                </div>
               )}
             </div>
 
             <div style={{flex:1,overflow:"auto",display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
               {visMeasures.length < 3 ? (
                 <div style={{color:"#94a3b8",fontSize:13}}>Add at least 3 measures to see the similarity map.</div>
+              ) : mdsComputing ? (
+                <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:12,color:"#94a3b8"}}>
+                  <div style={{width:28,height:28,border:"2px solid #e2e8f0",borderTop:"2px solid #378ADD",borderRadius:"50%",animation:"czSpin 0.8s linear infinite"}}/>
+                  <span style={{fontSize:13}}>Computing MDS for {visMeasures.length} measures…</span>
+                </div>
               ) : (
                 <svg width={MDS_W} height={MDS_H} style={{display:"block",background:"white",border:"0.5px solid rgba(0,0,0,0.08)",borderRadius:8}}>
                   {mdsLayout.edges.map(({i,j,v}) => {
                     const a=mdsLayout.coords[i], b=mdsLayout.coords[j]; if(!a||!b) return null;
                     const dim=hovNode!==null&&hovNode!==i&&hovNode!==j;
-                    return <line key={`e${i}-${j}`} x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke={corrColor(v)} strokeWidth={Math.max(0.5,(v-edgeThresh+0.02)*14)} opacity={dim?0.07:0.55}/>;
+                    return <line key={`e${i}-${j}`} x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke={corrColor(v)} strokeWidth={Math.max(0.4,(v-edgeThresh+0.02)*10)} opacity={dim?0.06:0.45}/>;
                   })}
                   {visMeasures.map((m,idx) => {
                     const c=mdsLayout.coords[idx]; if(!c) return null;
                     const f=famMap[m.family]||famMap["Other"];
                     const hi=searchQ&&hitIds.has(m.i);
                     const isHov3=hovNode===idx;
+                    const r = visMeasures.length > 100 ? (isHov3?7:hi?6:4) : (isHov3?9:hi?8:6);
                     const connectedSet = isHov3 ? new Set(mdsLayout.edges.filter(e=>e.i===idx||e.j===idx).map(e=>e.i===idx?e.j:e.i)) : new Set();
                     const dim=hovNode!==null&&!isHov3&&!connectedSet.has(idx);
                     return (
                       <g key={m.i} style={{cursor:"pointer"}} onMouseEnter={()=>setHovNode(idx)} onMouseLeave={()=>setHovNode(null)}>
-                        <circle cx={c.x} cy={c.y} r={isHov3?9:hi?8:6} fill={f.color} opacity={dim?0.18:1}
-                          stroke={isHov3||hi?"white":"rgba(255,255,255,0.6)"} strokeWidth={isHov3?2.5:1.5}/>
-                        {(isHov3||hi||visMeasures.length<=20) && (
-                          <text x={c.x} y={c.y-12} textAnchor="middle" fontSize={isHov3?11.5:9.5}
+                        <circle cx={c.x} cy={c.y} r={r} fill={f.color} opacity={dim?0.15:1}
+                          stroke={isHov3||hi?"white":"rgba(255,255,255,0.5)"} strokeWidth={isHov3?2:1}/>
+                        {(isHov3||hi||(visMeasures.length<=20)) && (
+                          <text x={c.x} y={c.y-(r+4)} textAnchor="middle" fontSize={isHov3?11:9}
                             fontWeight={isHov3||hi?"500":"400"} fill={dim?"#cbd5e1":f.color}
                             style={{userSelect:"none",pointerEvents:"none"}}>
                             {m.label}
