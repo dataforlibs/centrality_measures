@@ -567,6 +567,7 @@ function App() {
                 </div>
               )}
             </SideSection>
+            <SideSection label="Family legend" mt={4}>
               {FAM.map(f => { const cnt=visMeasures.filter(m=>m.family===f.name).length; if(!cnt) return null; return (
                 <div key={f.name} style={{display:"flex",alignItems:"center",gap:6,marginBottom:4}}>
                   <div style={{width:10,height:10,borderRadius:"50%",background:f.color,flexShrink:0}}/>
