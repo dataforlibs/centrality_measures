@@ -3,7 +3,7 @@
 
 const { useState, useMemo, useEffect, useCallback, useRef } = React;
 
-const DATA_URL = "/assets/data/correlation.json";
+const DATA_URL = "assets/data/correlation.json";
 
 const DEFAULTS = [0,1,2,3,4,6,8,10,12,20,21,22,32,36,37,38,39,55,56,70,71,74,86,88,13];
 
