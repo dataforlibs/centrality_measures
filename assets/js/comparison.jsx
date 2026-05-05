@@ -322,7 +322,7 @@ function App() {
   if (error) return <div style={{padding:20,color:"#dc2626",fontSize:13}}>Failed to load correlation data: {error}</div>;
 
   return (
-    <div style={{fontFamily:"system-ui,-apple-system,sans-serif",background:"#f8fafc",height:"82vh",minHeight:560,display:"flex",flexDirection:"column",overflow:"hidden",border:"0.5px solid #e2e8f0",borderRadius:8}}>
+    <div style={{fontFamily:"system-ui,-apple-system,sans-serif",background:"#f8fafc",height:"92vh",minHeight:560,display:"flex",flexDirection:"column",overflow:"hidden",border:"0.5px solid #e2e8f0",borderRadius:8}}>
       <style>{`@keyframes czSpin{to{transform:rotate(360deg)}}`}</style>
 
       <div style={{background:"#1a2535",padding:"0 18px",display:"flex",alignItems:"center",gap:16,height:50,flexShrink:0,borderRadius:"8px 8px 0 0"}}>
@@ -519,16 +519,17 @@ function App() {
               )}
             </div>
 
-            <div style={{flex:1,overflow:"auto",display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+            <div style={{flex:1,overflow:"hidden",padding:8,display:"flex",flexDirection:"column"}}>
               {visMeasures.length < 3 ? (
-                <div style={{color:"#94a3b8",fontSize:13}}>Add at least 3 measures to see the similarity map.</div>
+                <div style={{color:"#94a3b8",fontSize:13,padding:16}}>Add at least 3 measures to see the similarity map.</div>
               ) : mdsComputing ? (
-                <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:12,color:"#94a3b8"}}>
+                <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",flex:1,gap:12,color:"#94a3b8"}}>
                   <div style={{width:28,height:28,border:"2px solid #e2e8f0",borderTop:"2px solid #378ADD",borderRadius:"50%",animation:"czSpin 0.8s linear infinite"}}/>
                   <span style={{fontSize:13}}>Computing MDS for {visMeasures.length} measures…</span>
                 </div>
               ) : (
-                <svg width={MDS_W} height={MDS_H} style={{display:"block",background:"white",border:"0.5px solid rgba(0,0,0,0.08)",borderRadius:8}}>
+                <svg viewBox={`0 0 ${MDS_W} ${MDS_H}`} preserveAspectRatio="xMidYMid meet"
+                  style={{display:"block",width:"100%",height:"100%",background:"white",border:"0.5px solid rgba(0,0,0,0.08)",borderRadius:8}}>
                   {mdsLayout.edges.map(({i,j,v}) => {
                     const a=mdsLayout.coords[i], b=mdsLayout.coords[j]; if(!a||!b) return null;
                     const dim=hovNode!==null&&hovNode!==i&&hovNode!==j;
