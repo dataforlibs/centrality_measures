@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Centrality Measures — Interactive Comparison</title>
+
+  <!-- Prevent flash of unstyled content -->
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #f8fafc; font-family: system-ui, -apple-system, sans-serif; }
+
+    /* Spinner shown before React mounts */
+    #comparison-root:empty::after {
+      content: "Loading…";
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 200px;
+      color: #94a3b8;
+      font-size: 14px;
+    }
+
+    @keyframes czSpin { to { transform: rotate(360deg); } }
+  </style>
+
+  <!-- React 18 (UMD production builds — sets window.React and window.ReactDOM) -->
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+
+  <!-- Babel standalone (compiles JSX in the browser) -->
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body>
+
+  <!-- React mounts here -->
+  <div id="comparison-root"></div>
+
+  <!--
+    type="text/babel"  → Babel intercepts this, compiles JSX, then runs it
+    data-presets="react" → tells Babel to use the React preset (JSX support)
+    src="..."          → Babel fetches this file via XHR (same origin, so no CORS issue)
+  -->
+  <script type="text/babel"
+          src="assets/js/comparison.jsx"
+          data-presets="react">
+  </script>
+
+</body>
+</html>
