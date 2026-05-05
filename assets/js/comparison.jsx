@@ -231,6 +231,67 @@ function App() {
     if (!showCovering || !rawData || visMeasures.length < 2) return [];
     return greedyMaximin(visMeasures, getCorr, coveringK);
   }, [showCovering, visMeasures, getCorr, coveringK, rawData]);
+
+  // Coverage curve: max radius + coverage% for k = 1..MAX_K
+  // Used for elbow detection and the mini chart
+  const coverageCurve = useMemo(() => {
+    if (!showCovering || !rawData || visMeasures.length < 3) return [];
+    const n = visMeasures.length;
+    const MAX_K = Math.min(20, n - 1);
+
+    // Find seed (highest avg correlation)
+    let bestAvg = -1, seed = 0;
+    for (let i = 0; i < n; i++) {
+      let sum = 0;
+      for (let j = 0; j < n; j++) sum += i === j ? 0 : getCorr(visMeasures[i].i, visMeasures[j].i);
+      if (sum > bestAvg) { bestAvg = sum; seed = i; }
+    }
+
+    const sel = new Set([seed]);
+    const minD = Array.from({length: n}, (_, i) =>
+      i === seed ? 0 : 1 - getCorr(visMeasures[i].i, visMeasures[seed].i)
+    );
+
+    const coverThresh = 1 - edgeThresh; // distance equiv of rho threshold
+    const covPct = () => {
+      let covered = 0;
+      for (let i = 0; i < n; i++) if (sel.has(i) || minD[i] <= coverThresh) covered++;
+      return Math.round((covered / n) * 100);
+    };
+
+    const maxRad = () => { let m = 0; for (let i = 0; i < n; i++) if (!sel.has(i)) m = Math.max(m, minD[i]); return m; };
+    const pts = [{ k: 1, radius: maxRad(), pct: covPct() }];
+
+    for (let step = 0; step < MAX_K - 1; step++) {
+      let fd = -1, fi = -1;
+      for (let i = 0; i < n; i++) { if (!sel.has(i) && minD[i] > fd) { fd = minD[i]; fi = i; } }
+      if (fi === -1 || fd < 0.001) break;
+      sel.add(fi);
+      for (let i = 0; i < n; i++) {
+        if (sel.has(i)) continue;
+        const d = 1 - getCorr(visMeasures[i].i, visMeasures[fi].i);
+        if (d < minD[i]) minD[i] = d;
+      }
+      pts.push({ k: sel.size, radius: maxRad(), pct: covPct() });
+    }
+    return pts;
+  }, [showCovering, visMeasures, getCorr, rawData, edgeThresh]);
+
+  // Elbow detection — kneedle method: max perpendicular distance from diagonal
+  const optimalK = useMemo(() => {
+    if (coverageCurve.length < 3) return null;
+    const x0 = 1, y0 = coverageCurve[0].radius;
+    const x1 = coverageCurve[coverageCurve.length - 1].k;
+    const y1 = coverageCurve[coverageCurve.length - 1].radius;
+    const dx = x1 - x0, dy = y1 - y0, len = Math.sqrt(dx*dx + dy*dy);
+    let maxDist = -1, bestK = coverageCurve[0].k;
+    for (const pt of coverageCurve) {
+      // Perpendicular distance from point (pt.k, pt.radius) to the diagonal line
+      const dist = Math.abs(dy * pt.k - dx * pt.radius + x1 * y0 - y1 * x0) / len;
+      if (dist > maxDist) { maxDist = dist; bestK = pt.k; }
+    }
+    return bestK;
+  }, [coverageCurve]);
   useEffect(() => {
     if (!rawData || visMeasures.length < 3) { setMdsCoords([]); return; }
     setMdsComputing(true);
@@ -543,12 +604,81 @@ function App() {
                 <input type="number" min={2} max={20} value={coveringK}
                   onChange={e=>setCoveringK(Math.max(2,Math.min(20,+e.target.value)))}
                   style={{width:44,padding:"3px 5px",border:"0.5px solid rgba(0,0,0,0.18)",borderRadius:5,fontSize:12,textAlign:"center",outline:"none"}}/>
-                <button onClick={()=>setShowCovering(s=>!s)}
-                  style={{flex:1,padding:"4px 0",fontSize:11,fontWeight:500,borderRadius:5,cursor:"pointer",border:"0.5px solid #B5D4F4",
-                    background:showCovering?"#378ADD":"#E6F1FB",color:showCovering?"white":"#0C447C"}}>
-                  {showCovering?"Hide":"Run"}
-                </button>
+                {optimalK && (
+                  <button onClick={()=>setCoveringK(optimalK)}
+                    title="Set to elbow-detected optimal k"
+                    style={{fontSize:10,padding:"3px 7px",borderRadius:5,cursor:"pointer",border:"0.5px solid #C0DD97",background:"#EAF3DE",color:"#27500A"}}>
+                    k={optimalK} elbw
+                  </button>
+                )}
               </div>
+              <button onClick={()=>setShowCovering(s=>!s)}
+                style={{width:"100%",padding:"5px 0",fontSize:11,fontWeight:500,borderRadius:5,cursor:"pointer",border:"0.5px solid #B5D4F4",marginBottom:8,
+                  background:showCovering?"#378ADD":"#E6F1FB",color:showCovering?"white":"#0C447C"}}>
+                {showCovering?"Hide covering set":"Run covering set"}
+              </button>
+
+              {showCovering && coverageCurve.length > 0 && (()=>{
+                // Mini elbow chart
+                const W=158, H=72, PL=24, PR=6, PT=6, PB=18;
+                const iW=W-PL-PR, iH=H-PT-PB;
+                const maxR = coverageCurve[0].radius;
+                const minR = coverageCurve[coverageCurve.length-1].radius;
+                const maxK2 = coverageCurve[coverageCurve.length-1].k;
+                const sx = k => PL + ((k-1)/(maxK2-1||1)) * iW;
+                const sy = r => PT + (1-(r-minR)/(maxR-minR||1)) * iH;
+                const pathD = coverageCurve.map((p,i) => `${i===0?"M":"L"}${sx(p.k).toFixed(1)},${sy(p.radius).toFixed(1)}`).join(" ");
+                const curPt = coverageCurve.find(p=>p.k===coveringK);
+                const elbowPt = coverageCurve.find(p=>p.k===optimalK);
+                return (
+                  <div style={{marginBottom:8}}>
+                    <div style={{fontSize:10,color:"#94a3b8",marginBottom:4}}>Coverage radius vs k</div>
+                    <svg width={W} height={H} style={{display:"block",background:"#f8fafc",borderRadius:4,border:"0.5px solid rgba(0,0,0,0.08)"}}>
+                      {/* Grid lines */}
+                      {[0.25,0.5,0.75].map(t => {
+                        const y = PT + t * iH;
+                        return <line key={t} x1={PL} y1={y} x2={W-PR} y2={y} stroke="rgba(0,0,0,0.06)" strokeWidth={0.5}/>;
+                      })}
+                      {/* Curve */}
+                      <path d={pathD} fill="none" stroke="#378ADD" strokeWidth={1.5}/>
+                      {/* Elbow marker */}
+                      {elbowPt && (
+                        <g>
+                          <line x1={sx(elbowPt.k)} y1={PT} x2={sx(elbowPt.k)} y2={H-PB} stroke="#639922" strokeWidth={1} strokeDasharray="2,2"/>
+                          <circle cx={sx(elbowPt.k)} cy={sy(elbowPt.radius)} r={3.5} fill="#639922"/>
+                          <text x={sx(elbowPt.k)+3} y={PT+10} fontSize={8} fill="#27500A" fontWeight={500}>k={elbowPt.k}</text>
+                        </g>
+                      )}
+                      {/* Current k marker */}
+                      {curPt && curPt.k !== optimalK && (
+                        <circle cx={sx(curPt.k)} cy={sy(curPt.radius)} r={3} fill="#378ADD" stroke="white" strokeWidth={1}/>
+                      )}
+                      {/* Axis labels */}
+                      <text x={PL} y={H-3} fontSize={8} fill="#94a3b8">k=1</text>
+                      <text x={W-PR} y={H-3} fontSize={8} fill="#94a3b8" textAnchor="end">k={maxK2}</text>
+                      <text x={PL-2} y={PT+4} fontSize={8} fill="#94a3b8" textAnchor="end">{maxR.toFixed(2)}</text>
+                      <text x={PL-2} y={H-PB} fontSize={8} fill="#94a3b8" textAnchor="end">{minR.toFixed(2)}</text>
+                    </svg>
+
+                    {/* Coverage % bar */}
+                    {curPt && (
+                      <div style={{marginTop:6}}>
+                        <div style={{display:"flex",justifyContent:"space-between",fontSize:10,color:"#64748b",marginBottom:3}}>
+                          <span>Coverage at ρ ≥ {edgeThresh.toFixed(2)}</span>
+                          <span style={{fontWeight:500,color:curPt.pct>=90?"#27500A":"#633806"}}>{curPt.pct}%</span>
+                        </div>
+                        <div style={{height:6,background:"#e2e8f0",borderRadius:3,overflow:"hidden"}}>
+                          <div style={{height:"100%",width:`${curPt.pct}%`,background:curPt.pct>=90?"#639922":curPt.pct>=70?"#BA7517":"#378ADD",borderRadius:3,transition:"width 0.3s"}}/>
+                        </div>
+                        <div style={{fontSize:9,color:"#94a3b8",marginTop:2}}>
+                          % of {visMeasures.length} measures with a near-equivalent in the set
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+
               {showCovering && coveringSet.length > 0 && (
                 <div>
                   {coveringSet.map((idx, rank) => {
@@ -562,7 +692,7 @@ function App() {
                     );
                   })}
                   <div style={{fontSize:10,color:"#94a3b8",marginTop:6,lineHeight:1.4}}>
-                    Starred on map. Greedy maximin — each pick is farthest from the current set.
+                    Starred on map. Each pick is farthest from the current set.
                   </div>
                 </div>
               )}
