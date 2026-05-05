@@ -256,7 +256,7 @@ function App() {
         if (v >= edgeThresh) allEdges.push({ i, j, v });
       }
     allEdges.sort((a, b) => b.v - a.v);
-    return { coords, edges: allEdges.slice(0, 800) };
+    return { coords, edges: allEdges }; //.slice(0, 800) };
   }, [mdsCoords, visMeasures, getCorr, edgeThresh, MDS_W, MDS_H, PAD]);
 
   const CELL = 24, LEFT = 155, TOP = 105, BAND = 6;
