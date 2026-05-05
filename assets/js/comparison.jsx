@@ -148,6 +148,8 @@ function greedyMaximin(measures, getCorr, k) {
   }
   return selected;
 }
+
+function Pill({ fam }) {
   const f = famMap[fam] || famMap["Other"];
   return <span style={{background:f.bg,border:`0.5px solid ${f.border}`,borderRadius:4,padding:"1px 6px",fontSize:10,fontWeight:500,color:f.text,flexShrink:0}}>{fam}</span>;
 }
