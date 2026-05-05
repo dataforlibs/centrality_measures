@@ -106,7 +106,48 @@ function computeMDS(measures, getCorr) {
   return measures.map((_, i) => ({ x: v1[i] * e1, y: v2[i] * e2 }));
 }
 
-function Pill({ fam }) {
+// Greedy maximin — picks k measures that maximally cover the behavioural space.
+// Step 1: start with the most "central" measure (highest avg correlation to all others).
+// Step 2: repeatedly pick the measure farthest from the current selected set.
+function greedyMaximin(measures, getCorr, k) {
+  const n = measures.length;
+  if (n === 0 || k === 0) return [];
+  k = Math.min(k, n);
+
+  // Seed: measure with highest average correlation = most representative of the main blob
+  let bestAvg = -1, seed = 0;
+  for (let i = 0; i < n; i++) {
+    let sum = 0;
+    for (let j = 0; j < n; j++) sum += i === j ? 0 : getCorr(measures[i].i, measures[j].i);
+    const avg = sum / (n - 1);
+    if (avg > bestAvg) { bestAvg = avg; seed = i; }
+  }
+
+  const selected = [seed];
+  // minDistToSet[i] = distance from measure i to the nearest selected measure
+  const minDist = Array.from({length: n}, (_, i) =>
+    i === seed ? 0 : 1 - getCorr(measures[i].i, measures[seed].i)
+  );
+
+  while (selected.length < k) {
+    // Pick unselected measure with largest min-distance to selected set
+    let farthestDist = -1, farthest = -1;
+    for (let i = 0; i < n; i++) {
+      if (minDist[i] === 0 && selected.includes(i)) continue;
+      if (selected.includes(i)) continue;
+      if (minDist[i] > farthestDist) { farthestDist = minDist[i]; farthest = i; }
+    }
+    if (farthest === -1 || farthestDist < 0.005) break;
+    selected.push(farthest);
+    // Update minDist for remaining measures
+    for (let i = 0; i < n; i++) {
+      if (selected.includes(i)) continue;
+      const d = 1 - getCorr(measures[i].i, measures[farthest].i);
+      if (d < minDist[i]) minDist[i] = d;
+    }
+  }
+  return selected;
+}
   const f = famMap[fam] || famMap["Other"];
   return <span style={{background:f.bg,border:`0.5px solid ${f.border}`,borderRadius:4,padding:"1px 6px",fontSize:10,fontWeight:500,color:f.text,flexShrink:0}}>{fam}</span>;
 }
@@ -136,6 +177,8 @@ function App() {
   const [hovNode, setHovNode]         = useState(null);
   const [mdsCoords, setMdsCoords]     = useState([]);
   const [mdsComputing, setMdsComputing] = useState(false);
+  const [coveringK, setCoveringK]     = useState(6);
+  const [showCovering, setShowCovering] = useState(false);
   const addRef = useRef(null);
 
   const showAll = useCallback(() => {
@@ -181,7 +224,11 @@ function App() {
     [sortMode, clusterOrder, visMeasures]
   );
 
-  // Async MDS — avoids freezing the UI on 330 nodes (~1 s computation)
+  // Greedy maximin covering set (indices into visMeasures)
+  const coveringSet = useMemo(() => {
+    if (!showCovering || !rawData || visMeasures.length < 2) return [];
+    return greedyMaximin(visMeasures, getCorr, coveringK);
+  }, [showCovering, visMeasures, getCorr, coveringK, rawData]);
   useEffect(() => {
     if (!rawData || visMeasures.length < 3) { setMdsCoords([]); return; }
     setMdsComputing(true);
@@ -248,7 +295,7 @@ function App() {
       x: PAD + ((c.x - xMin) / xR) * (MDS_W - PAD * 2),
       y: PAD + ((c.y - yMin) / yR) * (MDS_H - PAD * 2)
     }));
-    // Collect all qualifying edges, then keep strongest 800 to avoid SVG overload
+    // Collect all qualifying edges — sorted strongest first
     const allEdges = [];
     for (let i = 0; i < visMeasures.length; i++)
       for (let j = i + 1; j < visMeasures.length; j++) {
@@ -256,7 +303,7 @@ function App() {
         if (v >= edgeThresh) allEdges.push({ i, j, v });
       }
     allEdges.sort((a, b) => b.v - a.v);
-    return { coords, edges: allEdges }; //.slice(0, 800) };
+    return { coords, edges: allEdges };
   }, [mdsCoords, visMeasures, getCorr, edgeThresh, MDS_W, MDS_H, PAD]);
 
   const CELL = 24, LEFT = 155, TOP = 105, BAND = 6;
@@ -481,14 +528,43 @@ function App() {
                 onChange={e=>setEdgeThresh(+e.target.value)}
                 style={{width:"100%",accentColor:"#378ADD"}}/>
               <div style={{fontSize:10,color:"#94a3b8",marginTop:4}}>
-                {mdsComputing ? "computing..." : `${mdsLayout.edges.length} edges${mdsLayout.edges.length===800?" (capped at 800)":""}`}
+                {mdsComputing ? "computing..." : `${mdsLayout.edges.length} edges — raise threshold if slow`}
               </div>
             </SideSection>
             <SideSection label="Highlight">
               <input value={searchQ} onChange={e=>setSearchQ(e.target.value)} placeholder="Name to highlight..."
                 style={{width:"100%",padding:"5px 8px",border:"0.5px solid rgba(0,0,0,0.18)",borderRadius:6,fontSize:11.5,background:"#f8fafc",color:"#1e293b",outline:"none",boxSizing:"border-box"}}/>
             </SideSection>
-            <SideSection label="Family legend" mt={4}>
+            <SideSection label="Minimal covering set" mt={4}>
+              <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:6}}>
+                <span style={{fontSize:11,color:"#64748b"}}>k =</span>
+                <input type="number" min={2} max={20} value={coveringK}
+                  onChange={e=>setCoveringK(Math.max(2,Math.min(20,+e.target.value)))}
+                  style={{width:44,padding:"3px 5px",border:"0.5px solid rgba(0,0,0,0.18)",borderRadius:5,fontSize:12,textAlign:"center",outline:"none"}}/>
+                <button onClick={()=>setShowCovering(s=>!s)}
+                  style={{flex:1,padding:"4px 0",fontSize:11,fontWeight:500,borderRadius:5,cursor:"pointer",border:"0.5px solid #B5D4F4",
+                    background:showCovering?"#378ADD":"#E6F1FB",color:showCovering?"white":"#0C447C"}}>
+                  {showCovering?"Hide":"Run"}
+                </button>
+              </div>
+              {showCovering && coveringSet.length > 0 && (
+                <div>
+                  {coveringSet.map((idx, rank) => {
+                    const m = visMeasures[idx];
+                    const f = famMap[m.family]||famMap["Other"];
+                    return (
+                      <div key={idx} style={{display:"flex",alignItems:"center",gap:5,marginBottom:4,padding:"3px 6px",background:f.bg,border:`0.5px solid ${f.border}`,borderRadius:5}}>
+                        <span style={{fontSize:10,fontWeight:700,color:f.text,minWidth:14}}>{rank+1}</span>
+                        <span style={{fontSize:11,color:f.text,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{m.label}</span>
+                      </div>
+                    );
+                  })}
+                  <div style={{fontSize:10,color:"#94a3b8",marginTop:6,lineHeight:1.4}}>
+                    Starred on map. Greedy maximin — each pick is farthest from the current set.
+                  </div>
+                </div>
+              )}
+            </SideSection>
               {FAM.map(f => { const cnt=visMeasures.filter(m=>m.family===f.name).length; if(!cnt) return null; return (
                 <div key={f.name} style={{display:"flex",alignItems:"center",gap:6,marginBottom:4}}>
                   <div style={{width:10,height:10,borderRadius:"50%",background:f.color,flexShrink:0}}/>
@@ -540,16 +616,24 @@ function App() {
                     const f=famMap[m.family]||famMap["Other"];
                     const hi=searchQ&&hitIds.has(m.i);
                     const isHov3=hovNode===idx;
-                    const r = visMeasures.length > 100 ? (isHov3?7:hi?6:4) : (isHov3?9:hi?8:6);
+                    const coverRank = showCovering ? coveringSet.indexOf(idx) : -1;
+                    const isCover = coverRank >= 0;
+                    const r = visMeasures.length > 100 ? (isCover?9:isHov3?7:hi?6:4) : (isCover?11:isHov3?9:hi?8:6);
                     const connectedSet = isHov3 ? new Set(mdsLayout.edges.filter(e=>e.i===idx||e.j===idx).map(e=>e.i===idx?e.j:e.i)) : new Set();
-                    const dim=hovNode!==null&&!isHov3&&!connectedSet.has(idx);
+                    const dim=hovNode!==null&&!isHov3&&!connectedSet.has(idx)&&!isCover;
                     return (
                       <g key={m.i} style={{cursor:"pointer"}} onMouseEnter={()=>setHovNode(idx)} onMouseLeave={()=>setHovNode(null)}>
+                        {isCover && <circle cx={c.x} cy={c.y} r={r+4} fill="none" stroke={f.color} strokeWidth={2} opacity={0.7}/>}
                         <circle cx={c.x} cy={c.y} r={r} fill={f.color} opacity={dim?0.15:1}
-                          stroke={isHov3||hi?"white":"rgba(255,255,255,0.5)"} strokeWidth={isHov3?2:1}/>
-                        {(isHov3||hi||(visMeasures.length<=20)) && (
-                          <text x={c.x} y={c.y-(r+4)} textAnchor="middle" fontSize={isHov3?11:9}
-                            fontWeight={isHov3||hi?"500":"400"} fill={dim?"#cbd5e1":f.color}
+                          stroke={isCover?"white":isHov3||hi?"white":"rgba(255,255,255,0.5)"}
+                          strokeWidth={isCover?2:isHov3?2:1}/>
+                        {isCover && (
+                          <text x={c.x} y={c.y+4} textAnchor="middle" fontSize={8} fontWeight="700"
+                            fill="white" style={{userSelect:"none",pointerEvents:"none"}}>{coverRank+1}</text>
+                        )}
+                        {(isHov3||hi||isCover||(visMeasures.length<=20)) && (
+                          <text x={c.x} y={c.y-(r+5)} textAnchor="middle" fontSize={isCover?11:isHov3?11:9}
+                            fontWeight={isCover||isHov3||hi?"500":"400"} fill={dim?"#cbd5e1":f.color}
                             style={{userSelect:"none",pointerEvents:"none"}}>
                             {m.label}
                           </text>
